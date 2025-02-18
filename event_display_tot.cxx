@@ -73,7 +73,7 @@ int eeemcal_16p_channel_map[4] = {6, 26, 63, 46};
 // 0    | 16i
 // 1    | 4x4
 // 2    | 16p
-void event_display(int run, int event=-1, int mode=0) {
+void event_display_tot(int run, int event=0, int mode=0) {
     gErrorIgnoreLevel = kWarning;
     // Read in the waveforms
     auto path = getenv("OUTPUT_PATH");
@@ -102,7 +102,7 @@ void event_display(int run, int event=-1, int mode=0) {
     bool open = false;
     // Set the branch addresses
     uint waveform[576][NUM_SAMPLES];
-    tree->SetBranchAddress("adc", &waveform);
+    tree->SetBranchAddress("tot", &waveform);
     for (event = 0; event < 100; event++) {
         std::cout << "\rEvent " << event << std::flush;
         c = new TCanvas(Form("c_%d", event), "c", 1600, 1200);
@@ -116,7 +116,7 @@ void event_display(int run, int event=-1, int mode=0) {
         auto label = new TLatex();
         label->SetNDC();
         label->SetTextSize(0.05);
-        label->DrawLatex(0.05, 0.9, Form("ADC: Run %d, Event %d", run, event));
+        label->DrawLatex(0.05, 0.9, Form("TOT: Run %d, Event %d", run, event));
         auto pad = new TPad("pad", "pad", 0.05, 0.05, 0.95, 0.85);
         pad->Draw();
         // Add text to the top of the pad with the run and event number
@@ -133,7 +133,7 @@ void event_display(int run, int event=-1, int mode=0) {
                     TGraph *g = new TGraph(NUM_SAMPLES-1);
                     g->SetTitle(Form("crystal_%d_sipm_%d_event_%d_ch_%d", crystal, sipm, event, channel_number));
                     g->GetXaxis()->SetTitle("Sample");
-                    g->GetYaxis()->SetTitle("ADC Counts");
+                    g->GetYaxis()->SetTitle("TOT Counts");
                     g->GetXaxis()->SetRange(0, NUM_SAMPLES-1);
                     // g->SetLineColor(sipm+1); // Different color for each SiPM
                     // g->SetMarkerColor(sipm+1);
@@ -149,12 +149,12 @@ void event_display(int run, int event=-1, int mode=0) {
                         }
                     }
                     g->SetMinimum(0);
-                    g->SetMaximum(1024);
+                    g->SetMaximum(4096);
                     g->Draw("APL");
                     // Set background color based on max signal
-                    int red = (int)(255 * max_signal / 1024);
-                    int green = (int)(255 * (1 - abs(max_signal - 512) / 512.0));
-                    int blue = (int)(255 * (1 - max_signal / 1024));
+                    int red = (int)(255 * max_signal / 4096);
+                    int green = (int)(255 * (1 - abs(max_signal - 2048) / 2048));
+                    int blue = (int)(255 * (1 - max_signal / 4096));
                     gPad->SetFillColorAlpha(TColor::GetColor(red, green, blue), 0.2);
                 }
                 // Draw borders between 4x4 groups
@@ -166,12 +166,12 @@ void event_display(int run, int event=-1, int mode=0) {
         }
         c->Draw();
         if (open) {
-            c->SaveAs(Form("output/event_display_adc_run%03d.pdf", run));
+            c->SaveAs(Form("output/event_display_tot_run%03d.pdf", run));
         } else {
-            c->SaveAs(Form("output/event_display_adc_run%03d.pdf(", run));
+            c->SaveAs(Form("output/event_display_tot_run%03d.pdf(", run));
             open = true;
         }
     }
     std::cout << std::endl;
-    c->SaveAs(Form("output/event_display_adc_run%03d.pdf)", run));
+    c->SaveAs(Form("output/event_display_tot_run%03d.pdf)", run));
 }
