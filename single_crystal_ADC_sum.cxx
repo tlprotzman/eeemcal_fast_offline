@@ -98,6 +98,15 @@ void single_crystal_ADC_sum(int run_number) {
     tree->SetBranchAddress("adc", &adc);
     tree->SetBranchAddress("tot", &tot);
 
+    std::vector<TH1D*> sipm_sums;
+    for (int crystal = 0; crystal < 25; crystal++) {
+        for (int sipm = 0; sipm < sipms_per_crystal[readout]; sipm++) {
+            TH1D *sipm_sum = new TH1D(Form("crystal_%02d_sipm_%02d_sum", crystal, sipm), Form("Crystal %d SiPM %d ADC Sum;ADC;Counts", crystal, sipm), 256, 0, 1024);
+            sipm_sums.push_back(sipm_sum);
+        }
+    }
+
+
     std::vector <TH1D*> crystal_sums;
     for (int crystal = 0; crystal < 25; crystal++) {
         TH1D *adc_total_sum = new TH1D(Form("crystal_%02d_sum", crystal), Form("Crystal %d ADC Sum;ADC;Counts", crystal), 256 * sipms_per_crystal[readout], 0, 1024 * sipms_per_crystal[readout]);
@@ -134,13 +143,14 @@ void single_crystal_ADC_sum(int run_number) {
                 //     max_adc += adc[crystal_channel][max_sample-1] - adc[crystal_channel][0];
                 // }
                 // if (max_sample < 19) {
-                    //     max_adc += adc[crystal_channel][max_sample+1] - adc[crystal_channel][0];
-                    // }
+                //     max_adc += adc[crystal_channel][max_sample+1] - adc[crystal_channel][0];
+                // }
                 adc_sum += max_adc;
                 if (crystal == 6 || crystal == 7 || crystal == 8 || crystal == 11 || crystal == 12 || crystal == 13 || crystal == 16 || crystal == 17 || crystal == 18) {
                     center_sum += max_adc;
                 }
                 event_sum += max_adc;
+                sipm_sums[crystal * sipms_per_crystal[readout] + channel]->Fill(max_adc);
             }
             crystal_sums[crystal]->Fill(adc_sum);
         }
@@ -258,6 +268,41 @@ void single_crystal_ADC_sum(int run_number) {
     latex.DrawLatex(0.89, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
     latex.DrawLatex(0.89, 0.8, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
     latex.DrawLatex(0.89, 0.75, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
-    c3->SaveAs(Form("output/run%03d_adc_sum.pdf)", run_number));
-    
+    c3->SaveAs(Form("output/run%03d_adc_sum.pdf", run_number));
+
+
+    // Each crystal, per SiPM
+    latex.SetTextSize(0.06);   
+    for (int crystal = 0; crystal < 25; crystal++) {
+        TCanvas *canvas = new TCanvas(Form("crystal_%02d_sipm_sum", crystal), Form("crystal_%02d_sipm_sum", crystal_ID[crystal]), 1600, 1200);
+        canvas->cd(0);
+        auto label = new TLatex();
+        label->SetNDC();
+        label->SetTextSize(0.05);
+        label->DrawLatex(0.05, 0.9, Form("Crystal %d SiPM ADC Sums Run %d", crystal_ID[crystal], run_number));
+        auto pad = new TPad("pad", "pad", 0.05, 0.05, 0.95, 0.85);
+        pad->Draw();
+        pad->cd();
+        pad->Divide(4, 4, 0.000, 0.000);
+        for (int sipm = 0; sipm < sipms_per_crystal[readout]; sipm++) {
+            pad->cd(sipm+1);
+            auto fit = new TF1("fit", "gaus", 200, 900);
+            sipm_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "QR");
+            sipm_sums[crystal * sipms_per_crystal[readout] + sipm]->Draw("e");
+            int entries_in_range = sipm_sums[crystal * sipms_per_crystal[readout] + sipm]->Integral(sipm_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(200), sipm_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(900));
+            double mean = fit->GetParameter(1);
+            double stddev = fit->GetParameter(2);
+            double mean_error = fit->GetParError(1);
+            double stddev_error = fit->GetParError(2);
+            double stddev_over_mean = stddev/mean;
+            double stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
+            latex.DrawLatex(0.95, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
+            latex.DrawLatex(0.95, 0.75, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
+            latex.DrawLatex(0.95, 0.65, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
+            latex.DrawLatex(0.95, 0.55, Form("Entries in range = %d", entries_in_range));
+        }
+        canvas->SaveAs(Form("output/run%03d_adc_sum.pdf", run_number));
+    }
+    auto end_page = new TCanvas("end_page", "end_page", 1600, 1200);
+    end_page->SaveAs(Form("output/run%03d_adc_sum.pdf)", run_number));
 }

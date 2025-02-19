@@ -103,7 +103,7 @@ void event_display_tot(int run, int event=0, int mode=0) {
     // Set the branch addresses
     uint waveform[576][NUM_SAMPLES];
     tree->SetBranchAddress("tot", &waveform);
-    for (event = 0; event < 100; event++) {
+    for (event = 0; event < 10; event++) {
         std::cout << "\rEvent " << event << std::flush;
         c = new TCanvas(Form("c_%d", event), "c", 1600, 1200);
         tree->GetEntry(event);

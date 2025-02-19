@@ -73,7 +73,7 @@ int eeemcal_16p_channel_map[4] = {6, 26, 63, 46};
 // 0    | 16i
 // 1    | 4x4
 // 2    | 16p
-void event_display(int run, int event=-1, int mode=0) {
+void event_display(int run, int event=0, int mode=0) {
     gErrorIgnoreLevel = kWarning;
     // Read in the waveforms
     auto path = getenv("OUTPUT_PATH");
@@ -103,7 +103,7 @@ void event_display(int run, int event=-1, int mode=0) {
     // Set the branch addresses
     uint waveform[576][NUM_SAMPLES];
     tree->SetBranchAddress("adc", &waveform);
-    for (event = 0; event < 100; event++) {
+    for (event = 0; event < 10; event++) {
         std::cout << "\rEvent " << event << std::flush;
         c = new TCanvas(Form("c_%d", event), "c", 1600, 1200);
         tree->GetEntry(event);
