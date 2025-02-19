@@ -166,12 +166,12 @@ void event_display_tot(int run, int event=0, int mode=0) {
         }
         c->Draw();
         if (open) {
-            c->SaveAs(Form("output/event_display_tot_run%03d.pdf", run));
+            c->SaveAs(Form("output/Run%03d_event_display_tot.pdf", run));
         } else {
-            c->SaveAs(Form("output/event_display_tot_run%03d.pdf(", run));
+            c->SaveAs(Form("output/Run%03d_event_display_tot.pdf(", run));
             open = true;
         }
     }
     std::cout << std::endl;
-    c->SaveAs(Form("output/event_display_tot_run%03d.pdf)", run));
+    c->SaveAs(Form("output/Run%03d_event_display_tot.pdf)", run));
 }

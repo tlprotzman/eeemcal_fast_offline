@@ -79,12 +79,12 @@ void adc_tot_correlation(int run) {
         latex.DrawLatex(0.12, 0.81, Form("Slope: %.2f", fit->GetParameter(0)));
         latex.DrawLatex(0.12, 0.77, Form("Fit #chi^{2}/NDF: %.2f", fit->GetChisquare()/fit->GetNDF()));
         if (open) {
-            c->SaveAs(Form("output/adc_tot_correlation_run%03d.pdf", run));
+            c->SaveAs(Form("output/Run%03d_adc_tot_correlation.pdf", run));
         } else {
-            c->SaveAs(Form("output/adc_tot_correlation_run%03d.pdf(", run));
+            c->SaveAs(Form("output/Run%03d_adc_tot_correlation.pdf(", run));
             open = true;
         }
     }
-    c->SaveAs(Form("output/adc_tot_correlation_run%03d.pdf)", run));
+    c->SaveAs(Form("output/Run%03d_adc_tot_correlation.pdf)", run));
     std::cout << "done" << std::endl;
 }
