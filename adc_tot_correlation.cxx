@@ -53,17 +53,15 @@ void adc_tot_correlation(int run) {
         for (int channel = 0; channel < 576; channel++) {
             // std::cerr << "\rEvent " << event << ", Channel " << channel << std::flush;
             double max_adc = 0;
-            double max_tot = 0;
+            int max_sample = 0;;
             for (int sample = 0; sample < NUM_SAMPLES; sample++) {
                 if (waveform[channel][sample] > max_adc) {
                     max_adc = waveform[channel][sample];
-                }
-                if (tot[channel][sample] > max_tot) {
-                    max_tot = tot[channel][sample];
+                    max_sample = sample;
                 }
             }
-            if (max_adc > 150 && max_adc < 950) {
-                hists[channel]->Fill(max_adc, max_tot);
+            if (max_adc > 300 && max_adc < 950) {
+                hists[channel]->Fill(max_adc, tot[channel][max_sample]);
             }
         }
     }
