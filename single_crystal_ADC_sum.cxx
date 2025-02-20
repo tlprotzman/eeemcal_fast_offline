@@ -102,6 +102,43 @@ double get_full_waveform_sum(uint adc[576][20], int channel) {
     return sum;
 }
 
+double decode_toa_sample(uint adc[576][20], uint toa[576][20], int channel) {
+    int toa_sample = 0;
+    int toa_found = 0;
+    for (int sample = 0; sample < 20; sample++) {
+        if (toa[channel][sample] > 0) {
+            toa_sample = sample;
+            toa_found++;
+        }
+    }
+    if (toa_sample == 0) {
+        return 0;
+    }
+    std::cout << "toa sample: " << toa_sample << std::endl;
+    if (toa_found > 1) {
+        std::cerr << "MORE THAN ONE TOA FOUND" << std::endl;
+    }
+    return adc[channel][toa_sample] - adc[channel][0];
+}
+
+double decode_tot_sample(uint adc[576][20], uint tot[576][20], int channel) {
+    int tot_sample = 0;
+    int tot_found = 0;
+    for (int sample = 0; sample < 20; sample++) {
+        if (tot[channel][sample] > 0) {
+            tot_sample = sample;
+            tot_found++;
+        }
+    }
+    if (tot_sample == 0) {
+        return 0;
+    }
+    std::cout << "ToT sample: " << tot_sample << std::endl;
+    if (tot_found > 1) {
+        std::cerr << "MORE THAN ONE TOT FOUND" << std::endl;
+    }
+    return adc[channel][tot_sample] - adc[channel][0];
+}
 
 void single_crystal_ADC_sum(int run_number) {
     int readout = 0;
@@ -122,8 +159,10 @@ void single_crystal_ADC_sum(int run_number) {
 
     uint adc[576][20];
     uint tot[576][20];
+    uint toa[576][20]; 
     tree->SetBranchAddress("adc", &adc);
     tree->SetBranchAddress("tot", &tot);
+    tree->SetBranchAddress("toa", &toa);
 
     std::vector<TH1D*> sipm_single_sums;
     std::vector<TH1D*> sipm_full_sums;
@@ -167,6 +206,8 @@ void single_crystal_ADC_sum(int run_number) {
             for (int channel = 0; channel < 16; channel++) {
                 int crystal_channel = 144 * crystal_fpga + 72 * crystal_asic + eeemcal_16i_channel_map[crystal_connector][channel];
                 double single_adc = get_max_ADC(adc, crystal_channel);
+                // decode_toa_sample(adc, toa, crystal_channel);
+                // decode_tot_sample(adc, tot, crystal_channel);
                 double full_adc = get_full_waveform_sum(adc, crystal_channel);
                 crystal_single_sum += single_adc;
                 crystal_full_sum += full_adc;

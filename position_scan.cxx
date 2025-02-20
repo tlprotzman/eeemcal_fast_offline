@@ -29,7 +29,7 @@ int eeemcal_16i_channel_a_map[16] = { 0,  1,  2,  3,  4,  5,  6,  7,
 const int NUM_SAMPLES = 20;
 
 void position_scan() {
-    int mode = 1;   // 0 horizontal, 1 vertical
+    int mode = 0;   // 0 horizontal, 1 vertical
     gStyle->SetOptStat(0);
     std::vector<TH1*> position_hists;
     std::vector<int> h_positions = {-4, -2, 0, 2, 4};
