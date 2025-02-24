@@ -9,6 +9,7 @@
 #include <TGraph.h>
 #include <TGraphErrors.h>
 #include <TF1.h>
+#include <TLine.h>
 
 #include <iostream>
 #include <vector>
@@ -33,7 +34,7 @@ int eeemcal_asic_map[25] = { 1, 1, 1, 0, 0,
                              1, 1, 1, 1, 1,
                              1, 0, 0, 0, 0,
                              1, 0, 1, 0, 0,
-                             0, 1, 1, 0, 0};
+                             0, 1, 3, 0, 0};
 
 // Connector | ID
 // A        | 0
@@ -85,21 +86,42 @@ double get_max_ADC(uint adc[576][20], int channel) {
             single_adc = sample_adc;
             max_sample = sample;
         }
-    }
+    };
     return  single_adc;
 }
 
-double get_full_waveform_sum(uint adc[576][20], int channel) {
-    double sum = 0;
-    for (int sample = 2; sample < 10; sample++) {
-        double this_sample = (double)adc[channel][sample] - (double)adc[channel][0];
-        if (this_sample < 0) {
-            this_sample = 0;
+double get_full_waveform_sum(uint adc[576][20], uint tot[576][20], int channel, TH1* gain_calib, TH1 *slope_calib, TH1 *intercept_calib) {
+    double value = 0;
+    // First, check the max ADC
+    for (int sample = 0; sample < 20; sample++) {
+        int sample_adc = adc[channel][sample] - adc[channel][0];
+        if (sample_adc > value) {
+            value = sample_adc;
         }
-        sum += this_sample;
     }
-    // std::cout << sum << std::endl;
-    return sum;
+    // Check if the max value is under the ToT threshold
+    if (value < 700) {
+        return value * gain_calib->GetBinContent(channel);
+    }
+
+    // If it's above, we switch to using the ToT conversion
+    double tot_value = 0;
+    for (int sample = 0; sample < 20; sample++) {
+        if (tot[channel][sample] > tot_value) {
+            tot_value = tot[channel][sample];
+        }
+    }
+    if (tot_value < 200) {
+        return 0;
+    }
+    double slope = slope_calib->GetBinContent(channel);
+    double intercept = intercept_calib->GetBinContent(channel);
+
+    // ToT = (adc * slope) + intercept
+    // (ToT - intercept) / slope = adc
+    value = (tot_value - intercept) / slope;
+    value *= gain_calib->GetBinContent(channel);
+    return value;
 }
 
 double decode_toa_sample(uint adc[576][20], uint toa[576][20], int channel) {
@@ -140,6 +162,59 @@ double decode_tot_sample(uint adc[576][20], uint tot[576][20], int channel) {
     return adc[channel][tot_sample] - adc[channel][0];
 }
 
+double crystal_ball(double *inputs, double *par) {
+    // Parameters
+    // alpha: Where the gaussian transitions to the power law tail - fix?
+    // n: The exponent of the power law tail - fix?
+    // x_bar: The mean of the gaussian - free
+    // sigma: The width of the gaussian - fix ?
+    // N: The normalization of the gaussian - free
+    // B baseline - fix?
+
+    double x = inputs[0];
+
+    double alpha = par[0];
+    double n = par[1];
+    double x_bar = par[2];
+    double sigma = par[3];
+    double N = par[4];
+    double offset = par[5];
+    // add an exponential decay 
+    
+    double A = pow(n / fabs(alpha), n) * exp(-0.5 * alpha * alpha);
+    double B = n / fabs(alpha) - fabs(alpha);
+    // std::cout << "A: " << A << std::endl;
+
+    // std::cout << "alpha: " << alpha << " n: " << n << " x_bar: " << x_bar << " sigma: " << sigma << " N: " << N << " B: " << B << " A: " << A << std::endl;
+
+    double ret_val;
+    if ((x - x_bar) / sigma > -1 * alpha) {
+        // std::cout << "path a" << std::endl;
+        ret_val = exp((-0.5 * (x - x_bar) * (x - x_bar)) / (sigma * sigma));
+    } else {
+        // std::cout << "path b" << std::endl;
+        ret_val = A * pow(B - ((x - x_bar) / sigma), -1 * n);
+    }
+    ret_val = N * ret_val + offset;
+    // std::cout << "x: " << x << " y: " << ret_val << std::endl;
+    return ret_val;
+}
+
+TF1* create_fit_function(const char* name, double lower_range, double upper_range) {
+    auto fit = new TF1(name, crystal_ball, lower_range, upper_range, 6);
+    fit->SetParNames("alpha", "n", "x_bar", "sigma", "N", "offset");
+    fit->SetParameters(0.5, 1, 250, 100, 10, 0);
+
+    fit->SetParLimits(0, 0.01, 1);
+    fit->SetParLimits(1, 0.01, 10);
+    fit->SetParLimits(2, 125, 1000);
+    fit->SetParLimits(3, 20, 1000);
+    fit->SetParLimits(4, 0, 5000);
+    fit->SetParLimits(5, 0, 10);
+    return fit;
+    // return new TF1(name, "gaus", lower_range, upper_range);
+}
+
 void single_crystal_ADC_sum(int run_number) {
     int readout = 0;
     gStyle->SetOptStat(0);
@@ -164,13 +239,30 @@ void single_crystal_ADC_sum(int run_number) {
     tree->SetBranchAddress("tot", &tot);
     tree->SetBranchAddress("toa", &toa);
 
+    // Read the gain correction histogram, if it exists
+    TFile *corrections_file = new TFile(Form("output/gain_matching.root"));
+    TH1F *corrections = nullptr;
+    if (corrections_file) {
+        corrections_file->GetObject("gain_factors", corrections);
+    }
+
+    // Read the ToT conversion file, if it exists
+    TFile *tot_file = new TFile(Form("output/tot_conversion.root"));
+    TH1 *tot_slope = nullptr;
+    TH1 *tot_intercept = nullptr;
+    if (tot_file) {
+        tot_file->GetObject("adc_tot_slope", tot_slope);
+        tot_file->GetObject("adc_tot_intercept", tot_intercept);
+    }
+
+
     std::vector<TH1D*> sipm_single_sums;
     std::vector<TH1D*> sipm_full_sums;
     for (int crystal = 0; crystal < 25; crystal++) {
         for (int sipm = 0; sipm < sipms_per_crystal[readout]; sipm++) {
-            TH1D *sipm_sum = new TH1D(Form("crystal_%02d_sipm_%02d_sum_single", crystal, sipm), Form("Crystal %d SiPM %d ADC Sum;ADC;Counts", crystal, sipm), 256, 0, 1024);
+            TH1D *sipm_sum = new TH1D(Form("crystal_%02d_sipm_%02d_sum_single", crystal, sipm), Form("Crystal %d SiPM %d Max ADC Sum;ADC;Counts", crystal, sipm), 256, 150, 1024);
             sipm_single_sums.push_back(sipm_sum);
-            sipm_sum = new TH1D(Form("crystal_%02d_sipm_%02d_sum_full", crystal, sipm), Form("Crystal %d SiPM %d ADC Sum;ADC;Counts", crystal, sipm), 256, 0, 3500);
+            sipm_sum = new TH1D(Form("crystal_%02d_sipm_%02d_sum_full", crystal, sipm), Form("Crystal %d SiPM %d ADC Sum;ADC;Counts", crystal, sipm), 256, 150, 2200);
             sipm_full_sums.push_back(sipm_sum);
         }
     }
@@ -206,9 +298,16 @@ void single_crystal_ADC_sum(int run_number) {
             for (int channel = 0; channel < 16; channel++) {
                 int crystal_channel = 144 * crystal_fpga + 72 * crystal_asic + eeemcal_16i_channel_map[crystal_connector][channel];
                 double single_adc = get_max_ADC(adc, crystal_channel);
+                if (corrections) {
+                    single_adc *= corrections->GetBinContent(crystal_channel);
+                }
+                single_adc = round(single_adc);
                 // decode_toa_sample(adc, toa, crystal_channel);
                 // decode_tot_sample(adc, tot, crystal_channel);
-                double full_adc = get_full_waveform_sum(adc, crystal_channel);
+                double full_adc = 0;
+                if (corrections && tot_slope && tot_intercept) {
+                    full_adc = get_full_waveform_sum(adc, tot, crystal_channel, corrections, tot_slope, tot_intercept);
+                }
                 crystal_single_sum += single_adc;
                 crystal_full_sum += full_adc;
                 if (crystal == 6 || crystal == 7 || crystal == 8 || crystal == 11 || crystal == 12 || crystal == 13 || crystal == 16 || crystal == 17 || crystal == 18) {
@@ -238,11 +337,13 @@ void single_crystal_ADC_sum(int run_number) {
 
     double max_value = 0;
     for (int crystal = 0; crystal < 25; crystal++) {
-        TF1 *fit = new TF1("fit", "gaus", lower_range, upper_range);
-        auto result = crystal_single_sums[crystal]->Fit("fit", "QR");
+        TF1 *fit = create_fit_function("fit", lower_range, upper_range);
+        fit->SetParameter(2, 5000);
+        fit->SetParameter(3, 1000);
+        auto result = crystal_single_sums[crystal]->Fit("fit", "R");
         
         if (fit->Eval(fit->GetParameter(1)) > max_value) {
-            max_value = fit->Eval(fit->GetParameter(1));
+            max_value = fit->Eval(fit->GetParameter(2));
         }
     }
     std::cout << "max is " << max_value << std::endl;
@@ -270,7 +371,7 @@ void single_crystal_ADC_sum(int run_number) {
         
         crystal_single_sums[crystal]->SetTitle("");
         crystal_single_sums[crystal]->Draw("e");
-        crystal_single_sums[crystal]->SetMaximum(max_value * 5);
+        crystal_single_sums[crystal]->SetMaximum(max_value * 3);
         crystal_single_sums[crystal]->GetXaxis()->SetLabelSize(0.06);
         crystal_single_sums[crystal]->GetYaxis()->SetLabelSize(0.06);
         crystal_single_sums[crystal]->GetXaxis()->SetTitle("");
@@ -283,16 +384,17 @@ void single_crystal_ADC_sum(int run_number) {
         latex.DrawLatex(0.95, 0.95, Form("Crystal %d", crystal_ID[crystal]));
         if (fit) {
             int entries_in_range = crystal_single_sums[crystal]->Integral(crystal_single_sums[crystal]->FindBin(lower_range), crystal_single_sums[crystal]->FindBin(upper_range));
-            double mean = fit->GetParameter(1);
-            double stddev = fit->GetParameter(2);
-            double mean_error = fit->GetParError(1);
-            double stddev_error = fit->GetParError(2);
+            double mean = fit->GetParameter(2);
+            double stddev = fit->GetParameter(3);
+            double mean_error = fit->GetParError(2);
+            double stddev_error = fit->GetParError(3);
             double stddev_over_mean = stddev/mean;
             double stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
             latex.DrawLatex(0.95, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
             latex.DrawLatex(0.95, 0.75, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
             latex.DrawLatex(0.95, 0.65, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
             latex.DrawLatex(0.95, 0.55, Form("Entries in range = %d", entries_in_range));
+            latex.DrawLatex(0.95, 0.45, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
         }
     }
 
@@ -307,14 +409,16 @@ void single_crystal_ADC_sum(int run_number) {
 
     // Draw center 9 crystal sum
     TCanvas *c2 = new TCanvas("c2", "c2", 1600, 1200);
-    auto fit = new TF1("fit", "gaus", 6000, 10000);
-    center_calo_single_sum->Fit("fit", "QR");
+    auto fit = create_fit_function("fit", 6000, 12000);
+    fit->SetParameter(2, 10000);
+    fit->SetParameter(3, 1000);
+    center_calo_single_sum->Fit("fit", "R");
     center_calo_single_sum->SetTitle("Central 9 Crystals");
     center_calo_single_sum->Draw("e");
-    double mean = fit->GetParameter(1);
-    double stddev = fit->GetParameter(2);
-    double mean_error = fit->GetParError(1);
-    double stddev_error = fit->GetParError(2);
+    double mean = fit->GetParameter(2);
+    double stddev = fit->GetParameter(3);
+    double mean_error = fit->GetParError(2);
+    double stddev_error = fit->GetParError(3);
     double stddev_over_mean = stddev/mean;
     double stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
 
@@ -325,26 +429,34 @@ void single_crystal_ADC_sum(int run_number) {
     latex.DrawLatex(0.89, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
     latex.DrawLatex(0.89, 0.8, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
     latex.DrawLatex(0.89, 0.75, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
+    latex.DrawLatex(0.89, 0.7, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
+
     c2->SaveAs(Form("output/Run%03d_adc_single_sum.pdf", run_number));
 
     // Draw full calo sum
     TCanvas *c3 = new TCanvas("c3", "c3", 1600, 1200);
-    fit = new TF1("fit", "gaus", 8000, 16000);
-    full_calo_single_sum->Fit("fit", "QR");
+    fit = create_fit_function("fit", 10000, 16000);
+    fit->SetParameter(2, 14000);
+    fit->SetParameter(3, 2000);
+    full_calo_single_sum->Fit("fit", "R");
     full_calo_single_sum->SetTitle("Full Calorimeter");
     full_calo_single_sum->Draw("e");
-    mean = fit->GetParameter(1);
-    stddev = fit->GetParameter(2);
-    mean_error = fit->GetParError(1);
-    stddev_error = fit->GetParError(2);
+    mean = fit->GetParameter(2);
+    stddev = fit->GetParameter(3);
+    mean_error = fit->GetParError(2);
+    stddev_error = fit->GetParError(3);
     stddev_over_mean = stddev/mean;
     stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
 
     latex.DrawLatex(0.89, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
     latex.DrawLatex(0.89, 0.8, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
     latex.DrawLatex(0.89, 0.75, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
+    latex.DrawLatex(0.89, 0.7, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
+
     c3->SaveAs(Form("output/Run%03d_adc_single_sum.pdf", run_number));
 
+    // Track the mean value per channel
+    auto mean_ADC = new TH1D("mean_ADC", "Mean ADC;Channel;Mean ADC", 400, 0, 400);
 
     // Each crystal, per SiPM
     latex.SetTextSize(0.06);   
@@ -361,25 +473,85 @@ void single_crystal_ADC_sum(int run_number) {
         pad->Divide(4, 4, 0.000, 0.000);
         for (int sipm = 0; sipm < sipms_per_crystal[readout]; sipm++) {
             pad->cd(sipm+1);
-            auto fit = new TF1("fit", "gaus", 200, 900);
-            sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "QR");
+            // first, fit with a gaussian to find about where the peak is
+            // auto gaus_fit = new TF1("gaus_fit", "gaus", 100, 900);
+            // sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("gaus_fit", "R");
+            auto fit = create_fit_function("fit", 175, 900);
+            // if (gaus_fit->GetParameter(1) < 500) {
+            //     fit->SetParameter(2, gaus_fit->GetParameter(1));
+            //     fit->SetParameter(3, gaus_fit->GetParameter(2));
+            // } else {
+            //     fit->SetParameter(2, 100);
+            //     fit->SetParameter(3, 20);
+            // }
+            
+            sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "R");
             sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Draw("e");
             int entries_in_range = sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Integral(sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(200), sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(900));
-            double mean = fit->GetParameter(1);
-            double stddev = fit->GetParameter(2);
-            double mean_error = fit->GetParError(1);
-            double stddev_error = fit->GetParError(2);
+            double mean = fit->GetParameter(2);
+            double stddev = fit->GetParameter(3);
+            double mean_error = fit->GetParError(2);
+            double stddev_error = fit->GetParError(3);
             double stddev_over_mean = stddev/mean;
             double stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
             latex.DrawLatex(0.95, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
             latex.DrawLatex(0.95, 0.75, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
             latex.DrawLatex(0.95, 0.65, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
             latex.DrawLatex(0.95, 0.55, Form("Entries in range = %d", entries_in_range));
+            latex.DrawLatex(0.95, 0.45, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
+            mean_ADC->SetBinContent(crystal * sipms_per_crystal[readout] + sipm, mean);
+            mean_ADC->SetBinError(crystal * sipms_per_crystal[readout] + sipm, mean_error);
         }
         canvas->SaveAs(Form("output/Run%03d_adc_single_sum.pdf", run_number));
     }
+
+    double target = 400;
     auto end_page = new TCanvas("end_page", "end_page", 1600, 1200);
-    end_page->SaveAs(Form("output/Run%03d_adc_single_sum.pdf)", run_number));
+    end_page->cd();
+    mean_ADC->Draw("e");
+    mean_ADC->GetYaxis()->SetRangeUser(0, 1024);
+    TLine *line = new TLine(0, target, 400, target);
+    line->SetLineColor(kRed);
+    line->SetLineWidth(2);
+    line->SetLineStyle(2); // Set line style to dashed
+    line->Draw();
+    end_page->SaveAs(Form("output/Run%03d_adc_single_sum.pdf", run_number));
+    
+    // Calculate gain factors for each channel
+    TH1F *gain_factors = new TH1F("gain_factors", "Gain Factors;Channel;Gain Factor", 576, 0, 576);
+    for (int i = 0; i < 400; i++) {
+        int crystal = i / 16;
+        int sipm = i % 16;
+        int crystal_single_sum = 0;
+        int crystal_full_sum = 0;
+        int crystal_fpga = eeemcal_fpga_map[crystal];
+        int crystal_asic = eeemcal_asic_map[crystal];
+        int crystal_connector = eeemcal_connector_map[crystal];
+        int sipm_channel = eeemcal_16i_channel_map[crystal_connector][sipm];
+        int crystal_channel = 144 * crystal_fpga + 72 * crystal_asic + sipm_channel;
+        
+        double mean = mean_ADC->GetBinContent(i);
+        double correction = 1;
+        if (mean > 1) {
+            correction = target/mean;
+        }
+        gain_factors->SetBinContent(crystal_channel, correction);
+        std::cout << crystal_channel << " " << mean << " " << correction << std::endl;
+        gain_factors->SetBinError(i, 0);//mean_ADC->GetBinError(i)/mean * correction);
+    }
+    
+    // Draw the gain factors
+    TCanvas *gain_canvas = new TCanvas("gain_canvas", "gain_canvas", 1600, 1200);
+    gain_canvas->cd();
+    gain_factors->Draw("e");
+    // gain_factors->GetYaxis()->SetRangeUser(0, 3);
+    gain_canvas->SaveAs(Form("output/Run%03d_adc_single_sum.pdf)", run_number));
+
+    // Write the corrections histogram
+    corrections_file = new TFile(Form("output/Run%03d_corrections.root.new", run_number), "RECREATE");
+    gain_factors->Write();
+    corrections_file->Close();
+
 
 
 
@@ -388,8 +560,12 @@ void single_crystal_ADC_sum(int run_number) {
 
     max_value = 0;
     for (int crystal = 0; crystal < 25; crystal++) {
-        TF1 *fit = new TF1("fit", "gaus", lower_range, upper_range);
-        auto result = crystal_full_sums[crystal]->Fit("fit", "QR");
+        TF1 *fit = create_fit_function("fit", lower_range, upper_range);
+        fit->SetParameter(2, 25000);
+        fit->SetParLimits(2, 10000, 35000);
+        fit->SetParameter(3, 1000);
+        fit->SetParLimits(3, 100, 2000);
+        auto result = crystal_full_sums[crystal]->Fit("fit", "R");
         
         if (fit->Eval(fit->GetParameter(1)) > max_value) {
             max_value = fit->Eval(fit->GetParameter(1));
@@ -417,9 +593,10 @@ void single_crystal_ADC_sum(int run_number) {
         pad->cd(crystal+1);
         auto fit = crystal_full_sums[crystal]->GetFunction("fit");
         
+        
         crystal_full_sums[crystal]->SetTitle("");
         crystal_full_sums[crystal]->Draw("e");
-        crystal_full_sums[crystal]->SetMaximum(max_value * 5);
+        // crystal_full_sums[crystal]->SetMaximum(max_value * 3);
         crystal_full_sums[crystal]->GetXaxis()->SetLabelSize(0.06);
         crystal_full_sums[crystal]->GetYaxis()->SetLabelSize(0.06);
         crystal_full_sums[crystal]->GetXaxis()->SetTitle("");
@@ -432,16 +609,18 @@ void single_crystal_ADC_sum(int run_number) {
         latex.DrawLatex(0.95, 0.95, Form("Crystal %d", crystal_ID[crystal]));
         if (fit) {
             int entries_in_range = crystal_full_sums[crystal]->Integral(crystal_full_sums[crystal]->FindBin(lower_range), crystal_full_sums[crystal]->FindBin(upper_range));
-            double mean = fit->GetParameter(1);
-            double stddev = fit->GetParameter(2);
-            double mean_error = fit->GetParError(1);
-            double stddev_error = fit->GetParError(2);
+            double mean = fit->GetParameter(2);
+            double stddev = fit->GetParameter(3);
+            double mean_error = fit->GetParError(2);
+            double stddev_error = fit->GetParError(3);
             double stddev_over_mean = stddev/mean;
             double stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
             latex.DrawLatex(0.95, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
             latex.DrawLatex(0.95, 0.75, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
             latex.DrawLatex(0.95, 0.65, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
             latex.DrawLatex(0.95, 0.55, Form("Entries in range = %d", entries_in_range));
+            latex.DrawLatex(0.95, 0.45, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
+
         }
     }
 
@@ -456,14 +635,19 @@ void single_crystal_ADC_sum(int run_number) {
 
     // Draw center 9 crystal sum
     c2 = new TCanvas("c6", "c2", 1600, 1200);
-    fit = new TF1("fit", "gaus", 25000, 38000);
-    center_calo_full_sum->Fit("fit", "QR");
+    fit = create_fit_function("fit", 26500, 38000);
+    fit->SetParameter(2, 30000);
+    fit->SetParLimits(2, 20000, 40000);
+    fit->SetParameter(3, 1000);
+    fit->SetParLimits(3, 100, 2000);
+
+    center_calo_full_sum->Fit("fit", "R");
     center_calo_full_sum->SetTitle("Central 9 Crystals");
     center_calo_full_sum->Draw("e");
-    mean = fit->GetParameter(1);
-    stddev = fit->GetParameter(2);
-    mean_error = fit->GetParError(1);
-    stddev_error = fit->GetParError(2);
+    mean = fit->GetParameter(2);
+    stddev = fit->GetParameter(3);
+    mean_error = fit->GetParError(2);
+    stddev_error = fit->GetParError(3);
     stddev_over_mean = stddev/mean;
     stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
 
@@ -473,24 +657,32 @@ void single_crystal_ADC_sum(int run_number) {
     latex.DrawLatex(0.89, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
     latex.DrawLatex(0.89, 0.8, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
     latex.DrawLatex(0.89, 0.75, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
+    latex.DrawLatex(0.89, 0.7, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
+
     c2->SaveAs(Form("output/Run%03d_adc_full_sum.pdf", run_number));
 
     // Draw full calo sum
     c3 = new TCanvas("c7", "c3", 1600, 1200);
-    fit = new TF1("fit", "gaus", 30000, 45000);
-    full_calo_full_sum->Fit("fit", "QR");
+    fit = create_fit_function("fit", 30000, 45000);
+    fit->SetParameter(2, 40000);
+    fit->SetParLimits(2, 31000, 50000);
+    fit->SetParameter(3, 2000);
+    fit->SetParLimits(3, 1000, 3000);
+    full_calo_full_sum->Fit("fit", "R");
     full_calo_full_sum->SetTitle("Full Calorimeter");
     full_calo_full_sum->Draw("e");
-    mean = fit->GetParameter(1);
-    stddev = fit->GetParameter(2);
-    mean_error = fit->GetParError(1);
-    stddev_error = fit->GetParError(2);
+    mean = fit->GetParameter(2);
+    stddev = fit->GetParameter(3);
+    mean_error = fit->GetParError(2);
+    stddev_error = fit->GetParError(3);
     stddev_over_mean = stddev/mean;
     stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
 
     latex.DrawLatex(0.89, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
     latex.DrawLatex(0.89, 0.8, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
     latex.DrawLatex(0.89, 0.75, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
+    latex.DrawLatex(0.95, 0.7, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
+
     c3->SaveAs(Form("output/Run%03d_adc_full_sum.pdf", run_number));
 
 
@@ -509,20 +701,21 @@ void single_crystal_ADC_sum(int run_number) {
         pad->Divide(4, 4, 0.000, 0.000);
         for (int sipm = 0; sipm < sipms_per_crystal[readout]; sipm++) {
             pad->cd(sipm+1);
-            auto fit = new TF1("fit", "gaus", 600, 3500);
-            sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "QR");
+            auto fit = create_fit_function("fit", 1000, 2000);
+            sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "R");
             sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Draw("e");
             int entries_in_range = sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Integral(sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(200), sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(900));
-            double mean = fit->GetParameter(1);
-            double stddev = fit->GetParameter(2);
-            double mean_error = fit->GetParError(1);
-            double stddev_error = fit->GetParError(2);
+            double mean = fit->GetParameter(2);
+            double stddev = fit->GetParameter(3);
+            double mean_error = fit->GetParError(2);
+            double stddev_error = fit->GetParError(3);
             double stddev_over_mean = stddev/mean;
             double stddev_over_mean_error = stddev_over_mean * sqrt(pow(mean_error/mean, 2) + pow(stddev_error/stddev, 2));
             latex.DrawLatex(0.95, 0.85, Form("Mean = %.2f#pm%.2f", mean, mean_error));
             latex.DrawLatex(0.95, 0.75, Form("StdDev = %.2f#pm%.2f", stddev, stddev_error));
             latex.DrawLatex(0.95, 0.65, Form("StdDev/Mean = %.2f#pm%.4f", stddev_over_mean, stddev_over_mean_error));
             latex.DrawLatex(0.95, 0.55, Form("Entries in range = %d", entries_in_range));
+            latex.DrawLatex(0.95, 0.45, Form("n, #alpha, N: %.2f, %.2f, %.2f", fit->GetParameter(1), fit->GetParameter(0), fit->GetParameter(4)));
         }
         canvas->SaveAs(Form("output/Run%03d_adc_full_sum.pdf", run_number));
     }

@@ -133,6 +133,8 @@ void adc_tot_correlation(int run) {
     bool open = false;
     std::vector<float> slopes(576);
     std::vector<float> slope_errors(576);
+    std::vector<float> intercepts(576);
+    std::vector<float> intercept_errors(576);
     for (int i = 0; i < 576; i++) {
         slopes[i] = 0;
         slope_errors[i] = 0;
@@ -166,6 +168,8 @@ void adc_tot_correlation(int run) {
             hists[channel]->Fit(fit, "QR");
             slopes[144 * eeemcal_fpga_map[crystal] + 72 * eeemcal_asic_map[crystal] + eeemcal_16i_channel_map[eeemcal_connector_map[crystal]][sipm]] = fit->GetParameter(0);
             slope_errors[144 * eeemcal_fpga_map[crystal] + 72 * eeemcal_asic_map[crystal] + eeemcal_16i_channel_map[eeemcal_connector_map[crystal]][sipm]] = fit->GetParError(0);
+            intercepts[144 * eeemcal_fpga_map[crystal] + 72 * eeemcal_asic_map[crystal] + eeemcal_16i_channel_map[eeemcal_connector_map[crystal]][sipm]] = fit->GetParameter(1);
+            intercept_errors[144 * eeemcal_fpga_map[crystal] + 72 * eeemcal_asic_map[crystal] + eeemcal_16i_channel_map[eeemcal_connector_map[crystal]][sipm]] = fit->GetParError(1);
             hists[channel]->Draw("COLZ");
             TLatex latex;
             latex.SetNDC();
@@ -197,17 +201,17 @@ void adc_tot_correlation(int run) {
     c->SaveAs(Form("output/Run%03d_adc_tot_correlation.pdf)", run));
     std::cout << "done" << std::endl;
 
-    // Write slopes and slope uncertainties to a CSV file
-    std::ofstream csv_file(Form("output/Run%03d_slopes.csv", run));
-    if (!csv_file.is_open()) {
-        std::cerr << "Error opening CSV file for writing" << std::endl;
-        return;
-    }
-
-    csv_file << "Channel,Slope,SlopeError\n";
+    // Write slopes and intercepts to root file
+    auto slopes_histogram = new TH1F("adc_tot_slope", "Slopes;Channel;Slope", 576, 0, 576);
+    auto intercepts_histogram = new TH1F("adc_tot_intercept", "Intercepts;Channel;Intercept", 576, 0, 576);
     for (int i = 0; i < 576; i++) {
-        csv_file << i << "," << slopes[i] << "," << slope_errors[i] << "\n";
+        slopes_histogram->SetBinContent(i, slopes[i]);
+        slopes_histogram->SetBinError(i, slope_errors[i]);
+        intercepts_histogram->SetBinContent(i, intercepts[i]);
+        intercepts_histogram->SetBinError(i, intercept_errors[i]);
     }
-
-    csv_file.close();
+    TFile *output_file = new TFile(Form("output/Run%03d_adc_tot_correlation.root.new", run), "RECREATE");
+    slopes_histogram->Write();
+    intercepts_histogram->Write();
+    output_file->Close();
 }
