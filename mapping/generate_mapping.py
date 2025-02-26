@@ -19,7 +19,7 @@ eeemcal_asic_map = [1, 1, 1, 0, 0,
                     1, 1, 1, 1, 1,
                     1, 0, 0, 0, 0,
                     1, 0, 1, 0, 0,
-                    0, 1, 3, 0, 0]
+                    0, 1, 1, 0, 0]
 
 # Connector | ID
 # A        | 0
@@ -30,7 +30,7 @@ eeemcal_connector_map = [2,  0,  1,  0,  1,
                          0,  2,  0,  3,  3,
                          1,  2,  0,  3,  0,
                          2,  0,  1,  1,  2,
-                         3,  1,  1,  1,  2]
+                         3,  1,  3,  1,  2]
 
 eeemcal_16i_channel_a_map = [2,  6, 11, 15,  0,  4,  9, 13,
                              1,  5, 10, 14,  3,  7, 12, 16]
@@ -47,9 +47,9 @@ eeemcal_16i_channel_d_map = [50, 46, 40, 36, 52, 48, 42, 38,
 eeemcal_16i_channel_map = [eeemcal_16i_channel_a_map, eeemcal_16i_channel_b_map, eeemcal_16i_channel_c_map, eeemcal_16i_channel_d_map]
 
 eeemcal_4x4_channel_a_map = [0, 4, 9, 12]
-eeemcal_4x4_channel_b_map = [20, 24, 27, 31]
-eeemcal_4x4_channel_c_map = [58, 62, 65, 69]
-eeemcal_4x4_channel_d_map = [38, 42, 48, 52]
+eeemcal_4x4_channel_b_map = [19, 23, 27, 31]
+eeemcal_4x4_channel_c_map = [69, 65, 61, 57]
+eeemcal_4x4_channel_d_map = [52, 48, 42, 38]
 eeemcal_4x4_channel_map = [eeemcal_4x4_channel_a_map, eeemcal_4x4_channel_b_map, eeemcal_4x4_channel_c_map, eeemcal_4x4_channel_d_map]
 
 eeemcal_16p_channel_map = [6, 26, 63, 46]
