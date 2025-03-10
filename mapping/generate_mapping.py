@@ -61,6 +61,9 @@ crystal_ID = [5, 10, 15, 20, 25,
               2, 7, 12, 17, 22,
               1, 6, 11, 16, 21]
 
+for i in range(len(crystal_ID)):
+    crystal_ID[i] = crystal_ID[i] - 1
+
 def make_16i_mapping():
     rows = []
     for crystal in range(25):
