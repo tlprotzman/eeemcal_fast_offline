@@ -10,6 +10,7 @@
 #include <TGraphErrors.h>
 #include <TF1.h>
 #include <TLine.h>
+#include <TError.h>
 
 #include <iostream>
 #include <vector>
@@ -216,6 +217,7 @@ TF1* create_fit_function(const char* name, double lower_range, double upper_rang
 }
 
 void single_crystal_ADC_sum(int run_number) {
+    gErrorIgnoreLevel = kWarning;
     int readout = 0;
     gStyle->SetOptStat(0);
     auto path = getenv("OUTPUT_PATH");
@@ -340,7 +342,7 @@ void single_crystal_ADC_sum(int run_number) {
         TF1 *fit = create_fit_function("fit", lower_range, upper_range);
         fit->SetParameter(2, 5000);
         fit->SetParameter(3, 1000);
-        auto result = crystal_single_sums[crystal]->Fit("fit", "R");
+        auto result = crystal_single_sums[crystal]->Fit("fit", "QR");
         
         if (fit->Eval(fit->GetParameter(1)) > max_value) {
             max_value = fit->Eval(fit->GetParameter(2));
@@ -412,7 +414,7 @@ void single_crystal_ADC_sum(int run_number) {
     auto fit = create_fit_function("fit", 6000, 12000);
     fit->SetParameter(2, 10000);
     fit->SetParameter(3, 1000);
-    center_calo_single_sum->Fit("fit", "R");
+    center_calo_single_sum->Fit("fit", "QR");
     center_calo_single_sum->SetTitle("Central 9 Crystals");
     center_calo_single_sum->Draw("e");
     double mean = fit->GetParameter(2);
@@ -438,7 +440,7 @@ void single_crystal_ADC_sum(int run_number) {
     fit = create_fit_function("fit", 10000, 16000);
     fit->SetParameter(2, 14000);
     fit->SetParameter(3, 2000);
-    full_calo_single_sum->Fit("fit", "R");
+    full_calo_single_sum->Fit("fit", "QR");
     full_calo_single_sum->SetTitle("Full Calorimeter");
     full_calo_single_sum->Draw("e");
     mean = fit->GetParameter(2);
@@ -475,7 +477,7 @@ void single_crystal_ADC_sum(int run_number) {
             pad->cd(sipm+1);
             // first, fit with a gaussian to find about where the peak is
             // auto gaus_fit = new TF1("gaus_fit", "gaus", 100, 900);
-            // sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("gaus_fit", "R");
+            // sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("gaus_fit", "QR");
             auto fit = create_fit_function("fit", 175, 900);
             // if (gaus_fit->GetParameter(1) < 500) {
             //     fit->SetParameter(2, gaus_fit->GetParameter(1));
@@ -485,7 +487,7 @@ void single_crystal_ADC_sum(int run_number) {
             //     fit->SetParameter(3, 20);
             // }
             
-            sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "R");
+            sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "QR");
             sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Draw("e");
             int entries_in_range = sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->Integral(sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(200), sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(900));
             double mean = fit->GetParameter(2);
@@ -565,7 +567,7 @@ void single_crystal_ADC_sum(int run_number) {
         fit->SetParLimits(2, 10000, 35000);
         fit->SetParameter(3, 1000);
         fit->SetParLimits(3, 100, 2000);
-        auto result = crystal_full_sums[crystal]->Fit("fit", "R");
+        auto result = crystal_full_sums[crystal]->Fit("fit", "QR");
         
         if (fit->Eval(fit->GetParameter(1)) > max_value) {
             max_value = fit->Eval(fit->GetParameter(1));
@@ -641,7 +643,7 @@ void single_crystal_ADC_sum(int run_number) {
     fit->SetParameter(3, 1000);
     fit->SetParLimits(3, 100, 2000);
 
-    center_calo_full_sum->Fit("fit", "R");
+    center_calo_full_sum->Fit("fit", "QR");
     center_calo_full_sum->SetTitle("Central 9 Crystals");
     center_calo_full_sum->Draw("e");
     mean = fit->GetParameter(2);
@@ -668,7 +670,7 @@ void single_crystal_ADC_sum(int run_number) {
     fit->SetParLimits(2, 31000, 50000);
     fit->SetParameter(3, 2000);
     fit->SetParLimits(3, 1000, 3000);
-    full_calo_full_sum->Fit("fit", "R");
+    full_calo_full_sum->Fit("fit", "QR");
     full_calo_full_sum->SetTitle("Full Calorimeter");
     full_calo_full_sum->Draw("e");
     mean = fit->GetParameter(2);
@@ -702,7 +704,7 @@ void single_crystal_ADC_sum(int run_number) {
         for (int sipm = 0; sipm < sipms_per_crystal[readout]; sipm++) {
             pad->cd(sipm+1);
             auto fit = create_fit_function("fit", 1000, 2000);
-            sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "R");
+            sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Fit("fit", "QR");
             sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Draw("e");
             int entries_in_range = sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->Integral(sipm_full_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(200), sipm_single_sums[crystal * sipms_per_crystal[readout] + sipm]->FindBin(900));
             double mean = fit->GetParameter(2);

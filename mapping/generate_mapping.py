@@ -6,31 +6,32 @@ import pandas as pd
 # 209     | 1
 # 210     | 2
 # 211     | 3
-eeemcal_fpga_map = [0, 3, 3, 0, 3,
-                    2, 1, 1, 1, 2,
-                    2, 1, 1, 1, 3,
-                    2, 2, 1, 2, 3,
-                    2, 0, 0, 1, 2]
+eeemcal_fpga_map = [1, 2, 1, 2, 1,
+                            3, 3, 1, 0, 2,
+                            1, 2, 2, 3, 0,
+                            3, 0, 2, 0, 0,
+                            2, 1, 1, 2, 1]
 
-# ASIC | ID
-# 0    | 0
-# 1    | 1
-eeemcal_asic_map = [1, 1, 1, 0, 0,
-                    1, 1, 1, 1, 1,
-                    1, 0, 0, 0, 0,
-                    1, 0, 1, 0, 0,
-                    0, 1, 1, 0, 0]
+# // ASIC | ID
+# // 0    | 0
+# // 1    | 1
+eeemcal_asic_map = [ 1, 0, 0, 1, 0,
+                             1, 1, 1, 1, 1,
+                             0, 1, 0, 0, 0,
+                             0, 1, 0, 0, 1,
+                             1, 0, 1, 0, 1]
 
-# Connector | ID
-# A        | 0
-# B        | 1
-# C        | 2
-# D        | 3
-eeemcal_connector_map = [2,  0,  1,  0,  1,
-                         0,  2,  0,  3,  3,
-                         1,  2,  0,  3,  0,
-                         2,  0,  1,  1,  2,
-                         3,  1,  3,  1,  2]
+# // Connector | ID
+# // A        | 0
+# // B        | 1
+# // C        | 2
+# // D        | 3
+eeemcal_connector_map = [ 0,  0,  3,  1,  0,
+                                  0,  3,  1,  2,  3,
+                                  2,  0,  3,  1,  0,
+                                  0,  3,  2,  2,  1,
+                                  2,  1,  3,  1,  2]
+    
 
 eeemcal_16i_channel_a_map = [2,  6, 11, 15,  0,  4,  9, 13,
                              1,  5, 10, 14,  3,  7, 12, 16]
@@ -74,7 +75,7 @@ def make_16i_mapping():
             channel = eeemcal_16i_channel_map[connector][sipm] + 144 * fpga + 72 * asic
             rows.append({'FPGA': fpga, 'ASIC': asic, 'Connector': connector, 'Crystal': crystal_ID[crystal], 'SiPM': sipm, 'Channel': channel})
     df = pd.DataFrame(rows)
-    df.to_csv('eeemcal_16i_mapping.csv', index=False)
+    df.to_csv('eeemcal_desy_dec2025_mapping_v2.csv', index=False)
 
 def make_16p_mapping():
     rows = []
@@ -101,8 +102,8 @@ def make_4x4_mapping():
 
 def main():
     make_16i_mapping()
-    make_16p_mapping()
-    make_4x4_mapping()
+    # make_16p_mapping()
+    # make_4x4_mapping()
 
 if __name__ == '__main__':
     main()

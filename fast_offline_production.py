@@ -15,7 +15,7 @@ import subprocess
 def main(args):
     # define environment variables
     DATA_PATH = '/Volumes/ProtzmanSSD/data/epic/eeemcal/DESY_FEB_2025/DESY_2025/data/beam'
-    OUTPUT_PATH = '/Volumes/ProtzmanSSD/data/epic/eeemcal/DESY_FEB_2025/prod'
+    OUTPUT_PATH = '/Volumes/ProtzmanSSD/data/epic/eeemcal/DESY_FEB_2025/prod3'
     RUNLOG_URL = 'https://docs.google.com/spreadsheets/d/100vYwQmm6yWk3cUcB_WvoXAw8JAoOyTnIgRnm21yAfs/export?format=csv&gid=526039506'
     # WORKING_DIRECTORY = 'work'
     WORKING_DIRECTORY = '/Users/tristan/dropbox/eeemcal_desy_feb_2025'
@@ -49,9 +49,9 @@ def main(args):
         return
     
     # run the reconstruction software
+    environment = {'DATA_PATH': DATA_PATH, 'OUTPUT_PATH': OUTPUT_PATH}
     if not args.skip_decode:
         print(f'Running the reconstruction software on Run {run_number}')
-        environment = {'DATA_PATH': DATA_PATH, 'OUTPUT_PATH': OUTPUT_PATH}
         command = [os.path.join(H2GDECODE_PATH, 'h2g_run'), str(run_number)]
         subprocess.run(command, env=environment, cwd=H2GDECODE_PATH, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         print('Reconstruction software finished')
@@ -66,12 +66,12 @@ def main(args):
     # create the energy spectra plots
     print(f'Creating energy spectra plots for Run {run_number}')
     command = [ROOT_PATH, '-q', '-b', '-x', '-l', f'single_crystal_ADC_sum.cxx({run_number})']
-    p3 = subprocess.Popen(command, cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p3 = subprocess.Popen(command, cwd=os.getcwd(), env=environment)#, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     #create TOT and ADC correlation plots
     print(f'Creating TOT and ADC correlation plots for Run {run_number}')
     command = [ROOT_PATH, '-q', '-b', '-x', '-l', f'adc_tot_correlation.cxx({run_number})']
-    p4 = subprocess.Popen(command, cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p4 = subprocess.Popen(command, cwd=os.getcwd(), env=environment)#, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # wait for the processes to finish
     # p1.wait()
@@ -80,9 +80,9 @@ def main(args):
     p4.wait()
 
     print('Done processing, moving files...')
-    os.makedirs(f'{WORKING_DIRECTORY}/run{run_number}', exist_ok=True)
-    os.system(f'mv output/Run{run_number:03}*.pdf {WORKING_DIRECTORY}/run{run_number}')
-    os.system(f'cp {OUTPUT_PATH}/Run{run_number:03}.root {WORKING_DIRECTORY}/run{run_number}')
+    os.makedirs(f'{WORKING_DIRECTORY}/run{run_number:03}', exist_ok=True)
+    os.system(f'mv output/Run{run_number:03}*.pdf {WORKING_DIRECTORY}/run{run_number:03}')
+    os.system(f'cp {OUTPUT_PATH}/run{run_number:03}.root {WORKING_DIRECTORY}/run{run_number:03}/run{run_number:03}.root')
 
     print('Fast offline production finished')
     
