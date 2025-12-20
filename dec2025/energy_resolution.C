@@ -1,16 +1,41 @@
 #include <map>
 #include <vector>
+#include <iostream>
+#include <fstream>
+#include <istream>
+#include <iosfwd>
+#include <sstream>
+
+#include <TCanvas.h>
+#include <TEllipse.h>
+#include <TF1.h>
+#include <TFile.h>
+#include <TH1.h>
+#include <TH1F.h>
+#include <TH2.h>
+#include <TH2F.h>
+#include <TLatex.h>
+#include <TLine.h>
+#include <TPad.h>
+#include <TStyle.h>
+#include <TTree.h>
+#include <TGraph.h>
+#include <TLegend.h>
 
 float sigma_cut = 2;
+float energy_fraction_cut = 0.3;
+long n_events = 1000000;
+// n_events = 1000;
+float tot_min_cut = 10000;
 
-float center_x = 1.97505;
-float sigma_x = 0.192906 * sigma_cut;
-float center_y = 1.97451;
-float sigma_y = 0.196824 * sigma_cut;
-float radius = 0.1;
+float center_x = 1.98022;
+float sigma_x = 0.193676 * sigma_cut;
+float center_y = 1.97743;
+float sigma_y = 0.193863 * sigma_cut;
 
-int run_number = 315;
-float beam_energy = 1;
+float adc_calib = 32444.1;  // 32444.1 Signal_ADC = 1 GeV 
+
+
 
 std::map<int, std::vector<int>> read_mapping(const std::string& filename) {
     std::map<int, std::vector<int>> mapping;
@@ -39,17 +64,6 @@ std::map<int, std::vector<int>> read_mapping(const std::string& filename) {
     return mapping;
 }
 
-// float calculate_signal(int *adc_values, float gain) {
-//     // Pedestal is the mean of the first three samples
-//     float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
-//     // Signal is the sum of samples 4 through 8 minus pedestals
-//     float signal = 0.0f;
-//     for (int i = 3; i < 8; ++i) {
-//         signal += (adc_values[i] - pedestal);
-//     }
-//     return signal * gain;
-// }
-
 float calculate_signal(uint32_t *adc_values, float gain) {
     // Pedestal is the mean of the first three samples
     float pedestal = (adc_values[0] + adc_values[1] + adc_values[2]) / 3.0f;
@@ -64,9 +78,7 @@ float calculate_signal(uint32_t *adc_values, float gain) {
     return signal * gain;
 }
 
-float calculate_signal(uint32_t *adc_values, uint32_t *tot_values, float gain) {
-    // Start with the ADC portion of the signal
-    float signal = calculate_signal(adc_values, gain);
+bool calculate_signal(uint32_t *adc_values, uint32_t *tot_values, float gain, float &signal) {
     // Check if there is a ToT value
     uint32_t tot = 0;
     for (int i = 0; i < 20; ++i) {
@@ -75,13 +87,15 @@ float calculate_signal(uint32_t *adc_values, uint32_t *tot_values, float gain) {
             break;
         }
     }
-    // If there is a ToT value, then we discard the ADC and convert the ToT to energy
+    // If there is no ToT value, return the single SiPM ADC signal
     if (tot == 0) {
-        return signal;
+        signal = calculate_signal(adc_values, gain);
+        return false;
     }
-    float adc_equivalent = 0.0f;
-    return 0;
 
+    // Otherwise, just return the first ToT value
+    signal = tot;
+    return true;
 }
 
 bool is_tot(uint32_t *tot_values) {
@@ -117,7 +131,7 @@ void fit_peak(TH1* hist) {
     hist->Fit(final_fit, "R");
 }
 
-void draw_text(TF1* fit) {
+void draw_text(TF1* fit, int run_number, float beam_energy) {
     TLatex *text = new TLatex();
     text->SetNDC();
     text->SetTextSize(0.04);
@@ -129,8 +143,8 @@ void draw_text(TF1* fit) {
     float resolution = (sigma / peak) * 100.0f;
     text->DrawLatex(0.93, 0.85, Form("%.01f GeV Electrons", beam_energy));
     text->DrawLatex(0.93, 0.80, Form("Run %d", run_number));
-    text->DrawLatex(0.93, 0.75, Form("Peak: %.0f", peak));
-    text->DrawLatex(0.93, 0.70, Form("Sigma: %.0f", sigma));
+    text->DrawLatex(0.93, 0.75, Form("Peak: %.03f", peak));
+    text->DrawLatex(0.93, 0.70, Form("Sigma: %.03f", sigma));
     text->DrawLatex(0.93, 0.65, Form("Resolution: %.2f%%", resolution));
     text->DrawLatex(0.93, 0.60, "Signal method 2");
 
@@ -178,131 +192,215 @@ bool calculate_cog(TH2* distribution, float *values) {
     return position_cut(x_cog, y_cog);
 }
 
+void print_progress(int progress) {
+    std::cout << " [";
+    for (int i = 0; i < 25; i++) {
+        if (i < progress) {
+            std::cout << "*";
+        } else {
+            std::cout << " ";
+        }
+    }
+    std::cout << "]\r" << std::flush;
+}
+
 void energy_resolution() {
     gStyle->SetOptStat(0);
-    float energy = 1;
+    
+    std::vector<int> run_numbers = {316, 321, 326, 331, 336};
+    std::vector<float> energies  = {1.0, 2.0, 3.0, 4.0, 5.0};
+    // run_numbers.clear();
+    // energies.clear();
+    // for (int r = 316; r <= 338; r++) {
+    //     run_numbers.push_back(r);
+    //     energies.push_back(1. + 0.2 * (r - 316));
+    // }
+
 
     int central_crystal_index = 12;
     int center_nine_indexes[8] = {7, 8, 9, 11, 13, 17, 18, 19};
     int remaining_indexes[16] = {0, 1, 2, 3, 4, 5, 6, 10, 11, 15, 16, 20, 21, 22, 23, 24};
 
+    std::vector<TH1*> central_crystal_energy_vec;
+    std::vector<TH1*> central_nine_energy_vec;
+    std::vector<TH1*> total_energy_vec;
+    std::vector<TH2*> cog_distribution_vec;
 
-    TH1* central_crystal_energy = new TH1F("central_crystal_energy", "Central Crystal Energy;Energy (ADC);Events", 500, 0, 75000);
-    TH1* central_nine_energy    = new TH1F("central_nine_energy", "Central 3x3 Energy;Energy (ADC);Events", 500, 0, 75000);
-    TH1* total_energy           = new TH1F("total_energy", "Total Energy;Energy (ADC);Events", 500, 0, 75000);
-    TH2* cog_distribution       = new TH2F("cog_distribution", "Center of Gravity Distribution;X (# Crystals);Y (# Crystals)", 100, -0.5, 4.5, 100, -0.5, 4.5);
+    std::vector<std::vector<TH1*>> crystal_energy;
+    std::vector<std::vector<TH1*>> crystal_energy_shares;
 
-    std::vector<std::vector<TH1*>> sipm_energy;
-    std::vector<TH1*> crystal_energy;
-    std::vector<TH1*> crystal_energy_shares;
-    for (int i = 0; i < 25; i++) {
-        for (int j = 0; j < 16; j++) {
-            sipm_energy.push_back(std::vector<TH1*>());
-            sipm_energy[i].push_back(new TH1F(Form("crystal_%02d_sipm_%02d_energy", i, j), Form("Crystal %02d SiPM %02d Energy;Energy (ADC);Events", i, j), 500, 0, 4000));
-        }   
-        crystal_energy.push_back(new TH1F(Form("crystal_%02d_energy", i), Form("Crystal %02d Energy;Energy (ADC);Events", i), 500, 0, 40000));
-        crystal_energy_shares.push_back(new TH1F(Form("crystal_%02d_energy_share", i), Form("Crystal %02d Energy Share;Energy Share;Events", i), 100, 0, 1));
+    // Set up all the histograms we need
+    for (int run = 0; run < run_numbers.size(); run++) {
+        int run_number = run_numbers[run];
+        central_crystal_energy_vec.push_back(new TH1F(Form("run%d_central_crystal_energy", run_number), Form("Run %d Central Crystal Energy;Energy (ADC);Events", run_number), 500, 0, 8));
+        central_nine_energy_vec.push_back(new TH1F(Form("run%d_central_nine_energy", run_number), Form("Run %d Central 3x3 Energy;Energy (ADC);Events", run_number), 500, 0, 8));
+        total_energy_vec.push_back(new TH1F(Form("run%d_total_energy", run_number), Form("Run %d Total Energy;Energy (ADC);Events", run_number), 500, 0, 8));
+        cog_distribution_vec.push_back(new TH2F(Form("run%d_cog_distribution", run_number), Form("Run %d Center of Gravity Distribution;X (# Crystals);Y (# Crystals)", run_number), 100, -0.5, 4.5, 100, -0.5, 4.5));
+    
+        crystal_energy.push_back(std::vector<TH1*>());
+        crystal_energy_shares.push_back(std::vector<TH1*>());
+        for (int i = 0; i < 25; i++) { 
+            crystal_energy[run].push_back(new TH1F(Form("run%d_crystal_%02d_energy", run_number, i), Form("Run %d Crystal %02d Energy;Energy (ADC);Events", run_number, i), 500, 0, 8));
+            crystal_energy_shares[run].push_back(new TH1F(Form("run%d_crystal_%02d_energy_share", run_number, i), Form("Run %d Crystal %02d Energy Share;Energy Share;Events", run_number, i), 10000, 0, 1));
+        }
     }
-
-    TH2* pedestals = new TH2F("pedestals", "Pedestals;Channel;Pedestal (ADC)", 72*8, 0, 72*8, 1024, 0, 1024);
 
     auto mapping = read_mapping("eeemcal_desy_dec2025_mapping.csv");
 
     TH1* gain_factor = nullptr;
+    TH1* crystal_gain_factor;
     TFile* gain_file = TFile::Open("output/gain_factors.root");
     if (gain_file && !gain_file->IsZombie()) {
         gain_factor = (TH1*)gain_file->Get("gain_factors");
+        crystal_gain_factor = (TH1*)gain_file->Get("crystal_factor");
         std::cout << "Loaded gain factors from file." << std::endl;
     }
     if (!gain_factor) {
         gain_factor = new TH1F("gain_factors", "Gain Factor", 400, 0, 400);
-        for (int i = 1; i <= 400; ++i) {
+        for (int i = 1; i <= 400; i++) {
             gain_factor->SetBinContent(i, 1.0);
         }
     }
-
-
-    // Process data file
-    char file_path[256];
-    sprintf(file_path, "/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number);
-    TFile* root_file = TFile::Open(file_path);
-    TTree* tree = (TTree*)root_file->Get("events");
-    uint32_t adc[576][20];
-    uint32_t tot[576][20];
-    int tot_events = 0;
-    tree->SetBranchAddress("adc", &adc);
-    tree->SetBranchAddress("tot", &tot);
-    tree->SetBranchStatus("*", 0);
-    tree->SetBranchStatus("adc", 1);
-    tree->SetBranchStatus("tot", 1);
-
-    Long64_t nentries = tree->GetEntries();
-    for (Long64_t entry = 0; entry < nentries; ++entry) {
-        tree->GetEntry(entry);
-        float central_signal = 0.0f;
-        float central_nine_signal = 0.0f;
-        float total_signal = 0.0f;
-        bool is_tot_event = false;
-
-        float signals[25];
-        for (int crystal = 0; crystal < 25; crystal++) {
-            if (crystal == 9) {
-                continue;
-            }
-            float crystal_signal = 0.0f;
-            for (int sipm = 0; sipm < 16; sipm++) {
-                int channel = mapping[crystal][sipm];
-                float gain = gain_factor->GetBinContent(crystal * 16 + sipm + 1);
-                float channel_signal = calculate_signal(adc[channel], gain);
-                sipm_energy[crystal][sipm]->Fill(channel_signal);
-                pedestals->Fill(channel, (adc[channel][0] + adc[channel][1] + adc[channel][2]) / 3.0f);
-                crystal_signal += channel_signal;
-                if (!is_tot_event && is_tot(tot[channel])) {
-                    is_tot_event = true;
-                }
-            }
-            signals[crystal] = crystal_signal;
+    if (!crystal_gain_factor) {
+        crystal_gain_factor = new TH1F("crystal_factor", "Crystal Gain", 25, 0, 25);
+        for (int i = 1; i <= 25; i++) {
+            crystal_gain_factor->SetBinContent(i, 1);
         }
-        if (is_tot_event) {
-            tot_events++;
-            // continue;
-        }
-
-        float x_cog, y_cog;
-        bool keep = calculate_cog(cog_distribution, signals);
-        keep &= (!is_tot_event);
-        if (!keep) {
-            continue;
-        }
-
-
-        // Populate energies
-        central_signal = signals[central_crystal_index];
-        for (int i = 0; i < 8; i++) {
-            int idx = center_nine_indexes[i];
-            central_nine_signal += signals[idx];
-        }
-        for (int i = 0; i < 16; i++) {
-            int idx = remaining_indexes[i];
-            total_signal += signals[idx];
-        }
-        central_nine_signal += central_signal;
-        total_signal += central_nine_signal;
-        central_crystal_energy->Fill(central_signal);
-        central_nine_energy->Fill(central_nine_signal);
-        total_energy->Fill(total_signal);
-
-        // Energy share fill
-        for (int i = 0; i < 25; i++) {
-            crystal_energy[i]->Fill(signals[i]);
-            crystal_energy_shares[i]->Fill(signals[i] / total_signal);
-        }
-
     }
 
-    fit_peak(central_crystal_energy);
-    fit_peak(central_nine_energy);
-    fit_peak(total_energy);
+    for (int run = 0; run < run_numbers.size(); run++) {
+        // Process data file
+        int run_number = run_numbers[run];
+        float energy = energies[run];
+        char file_path[256];
+        sprintf(file_path, "/Users/tristan/dropbox/eeemcal_desy_dec_2025/prod_0/Run%03d.root", run_number);
+        TFile* root_file = TFile::Open(file_path);
+        TTree* tree = (TTree*)root_file->Get("events");
+        uint32_t adc[576][20];
+        uint32_t tot[576][20];
+        int tot_events = 0;
+        tree->SetBranchAddress("adc", &adc);
+        tree->SetBranchAddress("tot", &tot);
+        tree->SetBranchStatus("*", 0);
+        tree->SetBranchStatus("adc", 1);
+        tree->SetBranchStatus("tot", 1);
+
+        Long64_t nentries = tree->GetEntries();
+        if (n_events < nentries) {
+            nentries = n_events;
+        }
+        std::cout << "Processing " << nentries << " events" << std::endl;
+        int complete = 0;
+        for (Long64_t entry = 0; entry < nentries; ++entry) {
+            if (entry * 25 / nentries > complete) {
+                complete = entry * 25 / nentries;
+                print_progress(complete);
+            }
+            tree->GetEntry(entry);
+            float central_signal = 0.0f;
+            float central_nine_signal = 0.0f;
+            float total_signal = 0.0f;
+            bool is_tot_event = false;
+
+            float signals[25];
+            for (int crystal = 0; crystal < 25; crystal++) {
+                if (crystal == 9) {
+                    continue;
+                }
+                if (crystal == 12) {
+                    continue;
+                }
+                float crystal_signal = 0.0f;
+                for (int sipm = 0; sipm < 16; sipm++) {
+                    int channel = mapping[crystal][sipm];
+                    float gain = gain_factor->GetBinContent(crystal * 16 + sipm + 1);
+                    float channel_signal = calculate_signal(adc[channel], gain);
+                    crystal_signal += channel_signal;
+                    if (!is_tot_event && is_tot(tot[channel])) {
+                        is_tot_event = true;
+                    }
+                }
+                signals[crystal] = crystal_signal * crystal_gain_factor->GetBinContent(crystal + 1);
+            }
+            if (is_tot_event) {
+                tot_events++;
+                // continue;
+            }
+
+            // Get the ToT
+            float center_signal = 0;
+            for (int sipm = 0; sipm < 16; sipm++) {
+                float signal = 0;
+                int channel = mapping[12][sipm];
+                float gain = gain_factor->GetBinContent(12 * 16 + sipm + 1);
+                calculate_signal(adc[channel], tot[channel], gain, signal);
+                center_signal += signal * gain;
+            }
+            if (center_signal < tot_min_cut) {
+                center_signal = 0;
+            }
+
+            for (int i = 0; i < 25; i++) {
+                signals[i] /= adc_calib;
+            }
+    
+
+            // Convert the ToT to energy - these are _incredibly_ rough
+            float center_energy = 0;
+            if (center_signal > 30000) {
+                center_energy = -0.862098 + 9.68314e-05 * center_signal;
+            } else {
+                center_energy = -0.1 + 4.29422e-05 * center_signal;
+            }
+            signals[12] = center_energy;
+
+            // std::cout << "Center energy: " << center_energy << std::endl;
+
+
+
+
+            float x_cog, y_cog;
+            bool keep = calculate_cog(cog_distribution_vec[run], signals);
+            keep &= (!is_tot_event);
+            // if (!keep) {
+            //     std::cout << "skipping?" << std::endl;
+            //     continue;
+            // }
+
+
+            // Populate energies
+            central_signal = signals[central_crystal_index];
+            for (int i = 0; i < 8; i++) {
+                int idx = center_nine_indexes[i];
+                central_nine_signal += signals[idx];
+            }
+            for (int i = 0; i < 16; i++) {
+                int idx = remaining_indexes[i];
+                total_signal += signals[idx];
+            }
+            if (signals[12] / total_signal < energy_fraction_cut) { // Skip events where the majority of the energy share is not in the central crystal;
+                continue;
+            }
+
+            central_nine_signal += central_signal;
+            total_signal += central_nine_signal;
+            central_crystal_energy_vec[run]->Fill(central_signal);
+            central_nine_energy_vec[run]->Fill(central_nine_signal);
+            total_energy_vec[run]->Fill(total_signal);
+            // std::cout << total_signal << std::endl;
+
+            // Energy share fill
+            for (int i = 0; i < 25; i++) {
+                crystal_energy[run][i]->Fill(signals[i]);
+                crystal_energy_shares[run][i]->Fill(signals[i] / total_signal);
+            }
+
+        }
+
+        fit_peak(central_crystal_energy_vec[run]);
+        fit_peak(central_nine_energy_vec[run]);
+        fit_peak(total_energy_vec[run]);
+    }
 
 
     int crystal_mapping[25] = {
@@ -313,107 +411,161 @@ void energy_resolution() {
         0, 5, 10, 15, 20
     };
 
+    TH1 *dummy = new TH1F("energy_resolution_center", "Energy Resolution;Energy (GeV);#sigma/mean", 1, 0, 6);
+    TGraph *res_center = new TGraph(run_numbers.size());
+    TGraph *res_middle = new TGraph(run_numbers.size());
+    TGraph *res_all    = new TGraph(run_numbers.size());
+    res_center->SetMarkerColor(kRed);
+    res_center->SetLineColor(kRed);
+    res_center->SetLineStyle(kDashed);
+    res_center->SetMarkerStyle(21);
+    res_center->SetMarkerSize(2);
+
+    res_middle->SetMarkerColor(kBlue);
+    res_middle->SetLineColor(kBlue);
+    res_middle->SetLineStyle(kDashed);
+    res_middle->SetMarkerStyle(22);
+    res_middle->SetMarkerSize(2);
+
+    res_all->SetMarkerColor(kMagenta);
+    res_all->SetLineColor(kMagenta);
+    res_all->SetLineStyle(kDashed);
+    res_all->SetMarkerStyle(23);
+    res_all->SetMarkerSize(2);
+
+    for (int run = 0; run < run_numbers.size(); run++) {
+        float res = central_crystal_energy_vec[run]->GetFunction("final_fit")->GetParameter(2) / central_crystal_energy_vec[run]->GetFunction("final_fit")->GetParameter(1);
+        res_center->SetPoint(run, energies[run], 100.0 * res);
+        res = central_nine_energy_vec[run]->GetFunction("final_fit")->GetParameter(2) / central_nine_energy_vec[run]->GetFunction("final_fit")->GetParameter(1);
+        res_middle->SetPoint(run, energies[run], 100.0 * res);
+        res = total_energy_vec[run]->GetFunction("final_fit")->GetParameter(2) / total_energy_vec[run]->GetFunction("final_fit")->GetParameter(1);
+        res_all->SetPoint(run, energies[run], 100.0 * res);
+    }
+
     TCanvas* canvas = new TCanvas("gain_matching", "", 800, 600);
-    canvas->SetRightMargin(0.05);
-    central_crystal_energy->Draw("HIST e");
-    auto fit = central_crystal_energy->GetFunction("final_fit");
-    fit->Draw("same");
-    draw_text(fit);
-    canvas->SaveAs("output/energy_resolution.pdf(");
+    dummy->Draw();
+    dummy->SetMinimum(0);
+    dummy->SetMaximum(10);
+    res_center->Draw("same lp");
+    res_middle->Draw("same lp");
+    res_all->Draw("same lp");
 
-    central_nine_energy->Draw("HIST e");
-    fit = central_nine_energy->GetFunction("final_fit");
-    fit->Draw("same");
-    draw_text(fit);
-    canvas->SaveAs("output/energy_resolution.pdf");
-
-    total_energy->Draw("HIST e");
-    fit = total_energy->GetFunction("final_fit");
-    fit->Draw("same");
-    draw_text(fit);
-    canvas->SaveAs("output/energy_resolution.pdf");
+    TLegend *l = new TLegend(0.6, 0.6, 0.89, 0.89);
+    l->SetLineWidth(0);
+    l->AddEntry(res_center, "Center Crystal");
+    l->AddEntry(res_middle, "Central 9 Crystals");
+    l->AddEntry(res_all, "All Crystals");
+    l->Draw();
 
 
-    canvas->SetRightMargin(0.1);
-    cog_distribution->Draw("COLZ");
-    gPad->SetLogz();
 
-    std::vector<TLine*> lines;
-    for (int i = 1; i < 5; i++) {
-        float loc = i - 0.5f;
-        TLine* line_x = new TLine(loc, -0.5, loc, 4.5);
-        line_x->SetLineStyle(2);
-        line_x->Draw();
-        TLine* line_y = new TLine(-0.5, loc, 4.5, loc);
-        line_y->SetLineStyle(2);
-        line_y->Draw();
-    }
-    TLine* line_x = new TLine(2, -0.5, 2, 4.5);
-    line_x->SetLineStyle(2);
-    line_x->SetLineColor(kRed);
-    line_x->Draw();
-
-    TLine* line_y = new TLine(-0.5, 2, 4.5, 2);
-    line_y->SetLineStyle(2);
-    line_y->SetLineColor(kRed);
-    line_y->Draw();
-
-    TEllipse* circle = new TEllipse(center_x, center_y, sigma_x, sigma_y);
-    circle->SetLineColor(kRed);
-    circle->SetLineWidth(2);
-    circle->SetFillStyle(0);
-    circle->Draw();
-
-    canvas->SaveAs("output/energy_resolution.pdf");
-
-    canvas->Clear();
-    pedestals->Draw("COLZ");
-    canvas->SaveAs("output/energy_resolution.pdf");
-
-    canvas->Clear();
-    canvas->Divide(5, 5);
-    for (int i = 0; i < 25; i++) {
-        canvas->cd(i + 1);
-        crystal_energy[crystal_mapping[i]]->Draw("HIST e");
-    }
-
-    canvas->SaveAs("output/energy_resolution.pdf");
     
-    canvas->Clear();
-    canvas->Divide(5, 5);
-    for (int i = 0; i < 25; i++) {
-        canvas->cd(i + 1);
-        crystal_energy_shares[crystal_mapping[i]]->Draw("HIST e");
-    }
-    canvas->SaveAs("output/energy_resolution.pdf");
-
-
-
-
-    for (int i = 0; i < 25; i++) {
+    canvas->SaveAs("output/energy_resolution.pdf(");
+    for (int run = 0; run < run_numbers.size(); run++) {
         canvas->Clear();
-        canvas->Divide(4, 4);
-        for (int j = 0; j < 16; j++) {
-            canvas->cd(j + 1);
-            sipm_energy[i][j]->Draw("HIST e");
+        int run_number = run_numbers[run];
+        float energy = energies[run];
+
+        canvas->SetRightMargin(0.05);
+        central_crystal_energy_vec[run]->Draw("HIST e");
+        auto fit = central_crystal_energy_vec[run]->GetFunction("final_fit");
+        fit->Draw("same");
+        draw_text(fit, run_number, energy);
+        canvas->SaveAs("output/energy_resolution.pdf");
+
+        central_nine_energy_vec[run]->Draw("HIST e");
+        fit = central_nine_energy_vec[run]->GetFunction("final_fit");
+        fit->Draw("same");
+        draw_text(fit, run_number, energy);
+        canvas->SaveAs("output/energy_resolution.pdf");
+
+        total_energy_vec[run]->Draw("HIST e");
+        fit = total_energy_vec[run]->GetFunction("final_fit");
+        fit->Draw("same");
+        draw_text(fit, run_number, energy);
+        canvas->SaveAs("output/energy_resolution.pdf");
+
+
+        canvas->SetRightMargin(0.1);
+        cog_distribution_vec[run]->Draw("COLZ");
+        gPad->SetLogz();
+
+        std::vector<TLine*> lines;
+        for (int i = 1; i < 5; i++) {
+            float loc = i - 0.5f;
+            TLine* line_x = new TLine(loc, -0.5, loc, 4.5);
+            line_x->SetLineStyle(2);
+            line_x->Draw();
+            TLine* line_y = new TLine(-0.5, loc, 4.5, loc);
+            line_y->SetLineStyle(2);
+            line_y->Draw();
+        }
+        TLine* line_x = new TLine(2, -0.5, 2, 4.5);
+        line_x->SetLineStyle(2);
+        line_x->SetLineColor(kRed);
+        line_x->Draw();
+
+        TLine* line_y = new TLine(-0.5, 2, 4.5, 2);
+        line_y->SetLineStyle(2);
+        line_y->SetLineColor(kRed);
+        line_y->Draw();
+
+        TEllipse* circle = new TEllipse(center_x, center_y, sigma_x, sigma_y);
+        circle->SetLineColor(kRed);
+        circle->SetLineWidth(2);
+        circle->SetFillStyle(0);
+        circle->Draw();
+
+        canvas->SaveAs("output/energy_resolution.pdf");
+
+        canvas->Clear();
+        canvas->Divide(5, 5);
+        for (int i = 0; i < 25; i++) {
+            canvas->cd(i + 1);
+            crystal_energy[run][crystal_mapping[i]]->Draw("HIST e");
+            // gPad->SetLogx();
+        }
+
+        canvas->SaveAs("output/energy_resolution.pdf");
+        
+
+        std::vector<float> gev_calib;
+        canvas->Clear();
+        canvas->Divide(5, 5);
+        float mean_calib = 0;
+        for (int i = 0; i < 25; i++) {
+            canvas->cd(i + 1);
+            crystal_energy_shares[run][crystal_mapping[i]]->Draw("HIST e");
+            crystal_energy_shares[run][crystal_mapping[i]]->GetXaxis()->SetRangeUser(0.001, 1);
+            gPad->SetLogx();
+            float signal_for_1gev = crystal_energy[run][crystal_mapping[i]]->GetMean() / crystal_energy_shares[run][crystal_mapping[i]]->GetMean();
+            float x_coord = 0.4;
+            if (i == 12) {
+                x_coord = 0.15;
+            }
+            TLatex *text = new TLatex();
+            text->SetNDC();
+            text->SetTextSize(0.04);
+            if (crystal_mapping[i] == 9) {
+                continue;
+            }
         }
         canvas->SaveAs("output/energy_resolution.pdf");
+        mean_calib /= 24;   // Since we are excluding crystal 9
+
     }
-    
-    
-
-
+    canvas->Clear();
     canvas->SaveAs("output/energy_resolution.pdf)");
 
-    float mean_x = cog_distribution->GetMean(1);
-    float mean_y = cog_distribution->GetMean(2);
-    float sigma_x = cog_distribution->GetStdDev(1);
-    float sigma_y = cog_distribution->GetStdDev(2);
+    // float mean_x = cog_distribution->GetMean(1);
+    // float mean_y = cog_distribution->GetMean(2);
+    // float sigma_x = cog_distribution->GetStdDev(1);
+    // float sigma_y = cog_distribution->GetStdDev(2);
 
-    std::cout << "Mean X: " << mean_x << " +/- " << sigma_x << std::endl;
-    std::cout << "Mean Y: " << mean_y << " +/- " << sigma_y << std::endl;
+    // std::cout << "Mean X: " << mean_x << " +/- " << sigma_x << std::endl;
+    // std::cout << "Mean Y: " << mean_y << " +/- " << sigma_y << std::endl;
 
-    std::cout << "Total TOT events: " << tot_events << " out of " << nentries << std::endl;
+    // std::cout << "Total TOT events: " << tot_events << " out of " << nentries << std::endl;
 
 }
 
